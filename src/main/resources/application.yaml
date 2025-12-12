@@ -15,8 +15,6 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-
-  # QUARTZ CONFIGURATION
   quartz:
     job-store-type: jdbc
     jdbc:
@@ -26,12 +24,11 @@ spring:
         quartz:
           scheduler:
             instanceId: AUTO
+            instanceName: clusteredScheduler
           jobStore:
-            class: org.quartz.impl.jdbcjobstore.JobStoreTX
-            driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
-            useProperties: false
-            tablePrefix: QRTZ_
             isClustered: true
             clusterCheckinInterval: 20000
+            tablePrefix: QRTZ_
+            misfireThreshold: 60000
           threadPool:
             threadCount: 10

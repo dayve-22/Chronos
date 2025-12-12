@@ -9,6 +9,8 @@ import org.quartz.SchedulerException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
+
 @RestController
 @RequestMapping("/api/v1/jobs")
 @RequiredArgsConstructor
@@ -17,12 +19,31 @@ public class JobController {
     private final JobService jobService;
 
     @PostMapping("/schedule")
-    public ResponseEntity<ApiResponse> scheduleJob(@Valid @RequestBody JobRequest jobRequest) {
-        boolean success = jobService.scheduleJob(jobRequest);
-        if (success) {
-            return ResponseEntity.ok(new ApiResponse(true, "Job scheduled successfully"));
-        } else {
-            return ResponseEntity.badRequest().body(new ApiResponse(false, "Job scheduling failed. Check logs."));
+    public ResponseEntity<ApiResponse> scheduleJob(@Valid @RequestBody JobRequest jobRequest, Principal principal) {
+        // Principal holds the username of the logged-in user (from JWT)
+        String username = principal.getName();
+
+        try {
+            boolean success = jobService.scheduleJob(jobRequest, username);
+            if (success) {
+                return ResponseEntity.ok(new ApiResponse(true, "Job scheduled successfully"));
+            } else {
+                return ResponseEntity.badRequest().body(new ApiResponse(false, "Job already exists"));
+            }
+        } catch (RuntimeException e) {
+            // Catch the Quota Exceeded exception
+            return ResponseEntity.status(429).body(new ApiResponse(false, e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/delete")
+    public ResponseEntity<ApiResponse> deleteJob(@RequestParam String name, Principal principal) {
+        try {
+            String username = principal.getName();
+            boolean deleted = jobService.deleteJob(name, username);
+            return ResponseEntity.ok(new ApiResponse(deleted, deleted ? "Job deleted" : "Job not found"));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(new ApiResponse(false, "Error deleting job"));
         }
     }
 
@@ -46,13 +67,4 @@ public class JobController {
         }
     }
 
-    @DeleteMapping("/delete")
-    public ResponseEntity<ApiResponse> deleteJob(@RequestParam String name, @RequestParam String group) {
-        try {
-            boolean deleted = jobService.deleteJob(name, group);
-            return ResponseEntity.ok(new ApiResponse(deleted, deleted ? "Job deleted" : "Job not found"));
-        } catch (SchedulerException e) {
-            return ResponseEntity.internalServerError().body(new ApiResponse(false, "Error deleting job"));
-        }
-    }
 }

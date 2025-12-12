@@ -24,6 +24,8 @@ public class JobRequest {
 
     private LocalDateTime startTime;
 
+    private String command;
+
     public java.util.Date getStartDateAt() {
         return java.util.Date.from(startTime.atZone(ZoneId.systemDefault()).toInstant());
     }
