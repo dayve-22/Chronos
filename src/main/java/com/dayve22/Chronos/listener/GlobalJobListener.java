@@ -1,6 +1,7 @@
 package com.dayve22.Chronos.listener;
 
 import com.dayve22.Chronos.entity.ExecutionLog;
+import com.dayve22.Chronos.repository.ExecutionLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.quartz.JobExecutionContext;
@@ -34,11 +35,10 @@ public class GlobalJobListener implements JobListener {
 
     @Override
     public void jobWasExecuted(JobExecutionContext context, JobExecutionException jobException) {
-        // This runs AFTER every job finishes
         ExecutionLog executionLog = new ExecutionLog();
         executionLog.setJobName(context.getJobDetail().getKey().getName());
         executionLog.setJobGroup(context.getJobDetail().getKey().getGroup());
-        executionLog.setStartTime(LocalDateTime.now()); // Simplify for demo (should use context.getFireTime)
+        executionLog.setStartTime(LocalDateTime.now());
         executionLog.setEndTime(LocalDateTime.now());
 
         if (jobException != null) {

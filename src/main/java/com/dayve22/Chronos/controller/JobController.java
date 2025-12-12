@@ -1,14 +1,13 @@
 package com.dayve22.Chronos.controller;
 
 import com.dayve22.Chronos.payload.ApiResponse;
+import com.dayve22.Chronos.payload.JobRequest;
 import com.dayve22.Chronos.service.JobService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.quartz.SchedulerException;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/jobs")
