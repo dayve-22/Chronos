@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.quartz.*;
 import org.quartz.impl.matchers.GroupMatcher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -22,48 +23,56 @@ public class JobService {
 
     private static final int MAX_JOBS_PER_USER = 20;
 
-
+    @Transactional  // ← ADD THIS
     public boolean scheduleJob(JobRequest jobRequest, String username) {
         try {
+            // Check quota first
             int currentJobCount = scheduler.getJobKeys(GroupMatcher.jobGroupEquals(username)).size();
             if (currentJobCount >= MAX_JOBS_PER_USER) {
                 log.warn("User '{}' has reached the job quota of {}", username, MAX_JOBS_PER_USER);
                 throw new RuntimeException("Quota Exceeded! You can only have " + MAX_JOBS_PER_USER + " active jobs.");
             }
 
+            // Check if job already exists BEFORE creating it
+            JobKey jobKey = new JobKey(jobRequest.getJobName(), username);
+            if (scheduler.checkExists(jobKey)) {
+                log.warn("Job '{}' already exists for user '{}'", jobRequest.getJobName(), username);
+                return false;
+            }
 
             Class<? extends Job> jobClass = jobRequest.getJobClass();
 
+            // Build job WITHOUT storeDurably()
             JobDetail jobDetail = JobBuilder.newJob(jobClass)
                     .withIdentity(jobRequest.getJobName(), username)
-                    .storeDurably()
-                    .requestRecovery()
+                    .storeDurably(false)  // ← CHANGE THIS: Don't store separately
+                    .requestRecovery(true)
                     .build();
 
-
+            // Add job data
             if (jobRequest.getCommand() != null) {
                 jobDetail.getJobDataMap().put("command", jobRequest.getCommand());
             }
             jobDetail.getJobDataMap().put("retries", 0);
 
-
+            // Build trigger
             Trigger trigger;
 
             if (jobRequest.getCronExpression() != null && !jobRequest.getCronExpression().isEmpty()) {
                 trigger = TriggerBuilder.newTrigger()
                         .withIdentity(jobRequest.getJobName() + "_trigger", username)
-                        .withSchedule(CronScheduleBuilder.cronSchedule(jobRequest.getCronExpression()))
+                        .withSchedule(CronScheduleBuilder.cronSchedule(jobRequest.getCronExpression())
+                                .withMisfireHandlingInstructionFireAndProceed())  // ← ADD MISFIRE HANDLING
                         .build();
             } else {
                 SimpleScheduleBuilder scheduleBuilder = SimpleScheduleBuilder.simpleSchedule()
-                        .withIntervalInSeconds(jobRequest.getRepeatIntervalInSeconds().intValue());
+                        .withIntervalInSeconds(jobRequest.getRepeatIntervalInSeconds().intValue())
+                        .withMisfireHandlingInstructionFireNow();  // ← ADD MISFIRE HANDLING
 
                 if (jobRequest.getRepeatCount() != null && jobRequest.getRepeatCount() == -1) {
                     scheduleBuilder.repeatForever();
                 } else if (jobRequest.getRepeatCount() != null) {
                     scheduleBuilder.withRepeatCount(jobRequest.getRepeatCount());
-                } else {
-                    scheduleBuilder.repeatForever();
                 }
 
                 // Handle start time
@@ -78,13 +87,12 @@ public class JobService {
                         .build();
             }
 
-            if (scheduler.checkExists(jobDetail.getKey())) {
-                log.warn("Job '{}' already exists for user '{}'", jobRequest.getJobName(), username);
-                return false;
-            }
+            // Schedule job and trigger together atomically
+            Date scheduledTime = scheduler.scheduleJob(jobDetail, trigger);
 
-            Date dt = scheduler.scheduleJob(jobDetail, trigger);
-            log.info("Job '{}' scheduled successfully for user '{}' at {}", jobRequest.getJobName(), username, dt);
+            log.info("Job '{}' scheduled successfully for user '{}' at {}",
+                    jobRequest.getJobName(), username, scheduledTime);
+
             return true;
 
         } catch (SchedulerException e) {
@@ -93,9 +101,7 @@ public class JobService {
         }
     }
 
-    /**
-     * Pauses a job.
-     */
+    @Transactional  // ← ADD THIS
     public void pauseJob(String jobName, String username) throws SchedulerException {
         JobKey key = JobKey.jobKey(jobName, username);
         if (scheduler.checkExists(key)) {
@@ -104,7 +110,7 @@ public class JobService {
         }
     }
 
-
+    @Transactional  // ← ADD THIS
     public void resumeJob(String jobName, String username) throws SchedulerException {
         JobKey key = JobKey.jobKey(jobName, username);
         if (scheduler.checkExists(key)) {
@@ -113,7 +119,7 @@ public class JobService {
         }
     }
 
-
+    @Transactional  // ← ADD THIS
     public boolean deleteJob(String jobName, String username) throws SchedulerException {
         JobKey key = JobKey.jobKey(jobName, username);
         if (scheduler.checkExists(key)) {
@@ -127,10 +133,10 @@ public class JobService {
     public Set<JobKey> listJobs(String username) throws SchedulerException {
         return scheduler.getJobKeys(GroupMatcher.jobGroupEquals(username));
     }
+
     public List<Map<String, Object>> getUserJobs(String username) {
         List<Map<String, Object>> jobList = new ArrayList<>();
         try {
-            // Retrieve all JobKeys belonging to this user (Group = Username)
             Set<JobKey> jobKeys = scheduler.getJobKeys(GroupMatcher.jobGroupEquals(username));
 
             for (JobKey jobKey : jobKeys) {
@@ -142,12 +148,10 @@ public class JobService {
                 jobMap.put("description", jobDetail.getDescription());
                 jobMap.put("jobClass", jobDetail.getJobClass().getName());
 
-                // Get command if it exists
                 if(jobDetail.getJobDataMap().containsKey("command")) {
                     jobMap.put("command", jobDetail.getJobDataMap().getString("command"));
                 }
 
-                // Get next fire time
                 if (!triggers.isEmpty()) {
                     jobMap.put("nextFireTime", triggers.get(0).getNextFireTime());
                     jobMap.put("state", scheduler.getTriggerState(triggers.get(0).getKey()));
