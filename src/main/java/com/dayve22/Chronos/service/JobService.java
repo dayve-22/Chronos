@@ -1,14 +1,16 @@
 package com.dayve22.Chronos.service;
 
+import com.dayve22.Chronos.entity.ExecutionLog;
 import com.dayve22.Chronos.payload.JobRequest;
+import com.dayve22.Chronos.repository.ExecutionLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.quartz.*;
 import org.quartz.impl.matchers.GroupMatcher;
 import org.springframework.stereotype.Service;
 
-import java.util.Date;
-import java.util.Set;
+import java.time.LocalDateTime;
+import java.util.*;
 
 @Service
 @Slf4j
@@ -16,13 +18,13 @@ import java.util.Set;
 public class JobService {
 
     private final Scheduler scheduler;
+    private final ExecutionLogRepository logRepository;
 
     private static final int MAX_JOBS_PER_USER = 20;
 
 
     public boolean scheduleJob(JobRequest jobRequest, String username) {
         try {
-            // 1. QUOTA CHECK: Count existing jobs for this user
             int currentJobCount = scheduler.getJobKeys(GroupMatcher.jobGroupEquals(username)).size();
             if (currentJobCount >= MAX_JOBS_PER_USER) {
                 log.warn("User '{}' has reached the job quota of {}", username, MAX_JOBS_PER_USER);
@@ -124,5 +126,42 @@ public class JobService {
 
     public Set<JobKey> listJobs(String username) throws SchedulerException {
         return scheduler.getJobKeys(GroupMatcher.jobGroupEquals(username));
+    }
+    public List<Map<String, Object>> getUserJobs(String username) {
+        List<Map<String, Object>> jobList = new ArrayList<>();
+        try {
+            // Retrieve all JobKeys belonging to this user (Group = Username)
+            Set<JobKey> jobKeys = scheduler.getJobKeys(GroupMatcher.jobGroupEquals(username));
+
+            for (JobKey jobKey : jobKeys) {
+                JobDetail jobDetail = scheduler.getJobDetail(jobKey);
+                List<? extends Trigger> triggers = scheduler.getTriggersOfJob(jobKey);
+
+                Map<String, Object> jobMap = new HashMap<>();
+                jobMap.put("jobName", jobKey.getName());
+                jobMap.put("description", jobDetail.getDescription());
+                jobMap.put("jobClass", jobDetail.getJobClass().getName());
+
+                // Get command if it exists
+                if(jobDetail.getJobDataMap().containsKey("command")) {
+                    jobMap.put("command", jobDetail.getJobDataMap().getString("command"));
+                }
+
+                // Get next fire time
+                if (!triggers.isEmpty()) {
+                    jobMap.put("nextFireTime", triggers.get(0).getNextFireTime());
+                    jobMap.put("state", scheduler.getTriggerState(triggers.get(0).getKey()));
+                }
+
+                jobList.add(jobMap);
+            }
+        } catch (SchedulerException e) {
+            log.error("Error listing jobs", e);
+        }
+        return jobList;
+    }
+
+    public List<ExecutionLog> getJobHistory(String username, LocalDateTime fromDate, LocalDateTime toDate) {
+        return logRepository.findByJobGroupAndStartTimeBetween(username, fromDate, toDate);
     }
 }

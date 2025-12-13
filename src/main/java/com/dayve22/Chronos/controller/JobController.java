@@ -1,5 +1,6 @@
 package com.dayve22.Chronos.controller;
 
+import com.dayve22.Chronos.entity.ExecutionLog;
 import com.dayve22.Chronos.payload.ApiResponse;
 import com.dayve22.Chronos.payload.JobRequest;
 import com.dayve22.Chronos.service.JobService;
@@ -10,6 +11,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/jobs")
@@ -65,6 +70,31 @@ public class JobController {
         } catch (SchedulerException e) {
             return ResponseEntity.internalServerError().body(new ApiResponse(false, "Error resuming job"));
         }
+    }
+
+    @GetMapping("/list")
+    public ResponseEntity<List<Map<String, Object>>> listMyJobs(Principal principal) {
+        String username = principal.getName();
+        List<Map<String, Object>> jobs = jobService.getUserJobs(username);
+        return ResponseEntity.ok(jobs);
+    }
+
+
+    @GetMapping("/history")
+    public ResponseEntity<List<ExecutionLog>> getJobHistory(
+            @RequestParam String start,
+            @RequestParam String end,
+            Principal principal) {
+
+        String username = principal.getName();
+
+        // Parse the date strings from the URL
+        DateTimeFormatter formatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+        LocalDateTime startDate = LocalDateTime.parse(start, formatter);
+        LocalDateTime endDate = LocalDateTime.parse(end, formatter);
+
+        List<ExecutionLog> logs = jobService.getJobHistory(username, startDate, endDate);
+        return ResponseEntity.ok(logs);
     }
 
 }

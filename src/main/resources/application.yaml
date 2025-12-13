@@ -26,6 +26,7 @@ spring:
             instanceId: AUTO
             instanceName: clusteredScheduler
           jobStore:
+            driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
             isClustered: true
             clusterCheckinInterval: 20000
             tablePrefix: QRTZ_
