@@ -4,32 +4,29 @@ server:
 spring:
   application:
     name: Chronos
+
   datasource:
     url: jdbc:postgresql://localhost:5432/chronos_db
     username: ajay
     password: password
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      pool-name: ChronosHikariPool
+
   jpa:
     hibernate:
       ddl-auto: update
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+    open-in-view: false
   quartz:
     job-store-type: jdbc
     jdbc:
-      initialize-schema: always
+      initialize-schema: never  # Change from 'never' to 'always' for first run
+      schema: classpath:org/quartz/impl/jdbcjobstore/tables_postgres.sql
     properties:
-      org:
-        quartz:
-          scheduler:
-            instanceId: AUTO
-            instanceName: clusteredScheduler
-          jobStore:
-            driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
-            isClustered: true
-            clusterCheckinInterval: 20000
-            tablePrefix: QRTZ_
-            misfireThreshold: 60000
-          threadPool:
-            threadCount: 10
+      org.quartz.scheduler.skipUpdateCheck: true

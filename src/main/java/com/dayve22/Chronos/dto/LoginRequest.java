@@ -1,4 +1,4 @@
-package com.dayve22.Chronos.payload;
+package com.dayve22.Chronos.dto;
 
 import lombok.Data;
 

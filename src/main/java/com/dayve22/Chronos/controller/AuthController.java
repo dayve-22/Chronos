@@ -1,11 +1,10 @@
 package com.dayve22.Chronos.controller;
 
 import com.dayve22.Chronos.entity.User;
-import com.dayve22.Chronos.payload.JwtResponse;
-import com.dayve22.Chronos.payload.LoginRequest;
+import com.dayve22.Chronos.dto.AuthResponse;
+import com.dayve22.Chronos.dto.LoginRequest;
 import com.dayve22.Chronos.repository.UserRepository;
 import com.dayve22.Chronos.security.JwtUtils;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -49,7 +48,7 @@ public class AuthController {
             );
 
             String token = jwtUtils.generateToken(request.getUsername());
-            return ResponseEntity.ok(new JwtResponse(token));
+            return ResponseEntity.ok(new AuthResponse(token));
 
         } catch (AuthenticationException e) {
             return ResponseEntity.status(401).body("Invalid Username or Password");
