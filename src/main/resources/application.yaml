@@ -23,10 +23,5 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: false
     open-in-view: false
-  quartz:
-    job-store-type: jdbc
-    jdbc:
-      initialize-schema: never  # Change from 'never' to 'always' for first run
-      schema: classpath:org/quartz/impl/jdbcjobstore/tables_postgres.sql
-    properties:
-      org.quartz.scheduler.skipUpdateCheck: true
+
+  # REMOVED: spring.quartz block (It does nothing now)

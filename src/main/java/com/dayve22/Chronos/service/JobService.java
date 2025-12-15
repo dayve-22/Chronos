@@ -6,7 +6,7 @@ import org.quartz.impl.matchers.GroupMatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Transactional; // Ensure this is imported
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -22,6 +22,8 @@ public class JobService {
         this.scheduler = scheduler;
     }
 
+    // ADD THIS ANNOTATION
+    @Transactional
     public String scheduleOneTimeJob(String command, LocalDateTime executeAt) throws SchedulerException {
         String jobId = UUID.randomUUID().toString();
 
@@ -29,7 +31,7 @@ public class JobService {
                 .withIdentity(jobId, "user-jobs")
                 .usingJobData(CommandExecutionJob.DATA_COMMAND, command)
                 .usingJobData(CommandExecutionJob.DATA_RETRIES_ALLOWED, 3)
-                .storeDurably(false) // Don't store durably for one-time jobs
+                .storeDurably(false)
                 .build();
 
         Trigger trigger = TriggerBuilder.newTrigger()
@@ -38,13 +40,15 @@ public class JobService {
                 .startAt(Date.from(executeAt.atZone(ZoneId.systemDefault()).toInstant()))
                 .build();
 
-        // Schedule job and trigger together
+        // FIX: Use the atomic method. Do not call addJob() separately.
         scheduler.scheduleJob(jobDetail, trigger);
 
         log.info("Scheduled one-time job: {} at {}", jobId, executeAt);
         return jobId;
     }
 
+    // ADD THIS ANNOTATION
+    @Transactional
     public String scheduleCronJob(String command, String cronExpression) throws SchedulerException {
         String jobId = UUID.randomUUID().toString();
 
@@ -58,22 +62,19 @@ public class JobService {
                 .withIdentity(jobId, "user-jobs")
                 .usingJobData(CommandExecutionJob.DATA_COMMAND, command)
                 .usingJobData(CommandExecutionJob.DATA_RETRIES_ALLOWED, 3)
-                .storeDurably(true) // Store durably for recurring jobs
-                .requestRecovery(true) // Recover if scheduler crashes
+                .storeDurably(true)
+                .requestRecovery(true)
                 .build();
 
-        // Build cron trigger
         CronTrigger trigger = TriggerBuilder.newTrigger()
                 .withIdentity(jobId, "cron-triggers")
                 .forJob(jobDetail)
-                .withSchedule(
-                        CronScheduleBuilder.cronSchedule(cronExpression)
-                                .withMisfireHandlingInstructionDoNothing() // Don't fire missed jobs
-                )
+                .withSchedule(CronScheduleBuilder.cronSchedule(cronExpression)
+                        .withMisfireHandlingInstructionDoNothing())
                 .startNow()
                 .build();
 
-        // Schedule job and trigger atomically
+        // FIX: Use the atomic method. Do not call addJob() separately.
         scheduler.scheduleJob(jobDetail, trigger);
 
         log.info("Scheduled cron job: {} with expression: {}", jobId, cronExpression);
