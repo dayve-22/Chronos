@@ -33,13 +33,17 @@ public class JobExecutor {
 
         ProcessBuilder pb = new ProcessBuilder();
 
-        // Parse command - handle both string and array format
+        boolean isWindows = System.getProperty("os.name").toLowerCase().startsWith("win");
+
         if (data.getCommand().startsWith("[")) {
             String[] cmdArray = objectMapper.readValue(data.getCommand(), String[].class);
             pb.command(cmdArray);
         } else {
-            // For simple commands, split by space (Unix/Linux style)
-            pb.command("sh", "-c", data.getCommand());
+            if (isWindows) {
+                pb.command("cmd.exe", "/c", data.getCommand());
+            } else {
+                pb.command("sh", "-c", data.getCommand());
+            }
         }
 
         if (data.getWorkingDirectory() != null) {
@@ -60,7 +64,6 @@ public class JobExecutor {
             }
         }
 
-        // Wait for completion with timeout
         boolean finished = process.waitFor(
                 data.getTimeoutSeconds() != null ? data.getTimeoutSeconds() : 300,
                 java.util.concurrent.TimeUnit.SECONDS
@@ -75,7 +78,7 @@ public class JobExecutor {
         execution.setOutput(output.toString());
 
         if (exitCode != 0) {
-            throw new Exception("Command failed with exit code: " + exitCode);
+            throw new Exception("Exit code " + exitCode + ": " + output.toString());
         }
 
         logger.info("Command executed successfully for job: {}", job.getId());

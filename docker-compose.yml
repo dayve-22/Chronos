@@ -1,51 +1,54 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: chronos-postgres
-    environment:
-      POSTGRES_DB: chronos
-      POSTGRES_USER: chronos_user
-      POSTGRES_PASSWORD: chronos_password
+  # Your Spring Boot Application
+  app:
+    build: .
+    container_name: chronos-app
     ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chronos_user -d chronos"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - "8080:8080"
+    environment:
+      # Override localhost with container service names
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/chronos_db
+      - SPRING_DATASOURCE_USERNAME=ajay
+      - SPRING_DATASOURCE_PASSWORD=password
+      - SPRING_REDIS_HOST=redis
+      - SPRING_REDIS_PORT=6379
+    depends_on:
+      - postgres
+      - redis
     networks:
       - chronos-network
 
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: chronos-app
-    depends_on:
-      postgres:
-        condition: service_healthy
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: chronos-postgres
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/chronos
-      SPRING_DATASOURCE_USERNAME: chronos_user
-      SPRING_DATASOURCE_PASSWORD: chronos_password
-      SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      SPRING_JPA_SHOW_SQL: "false"
-      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.PostgreSQLDialect
-      # JWT Configuration (set your own secret)
-      JWT_SECRET: your-secret-key-change-this-in-production
-      JWT_EXPIRATION: 86400000
+      - POSTGRES_DB=chronos_db
+      - POSTGRES_USER=ajay
+      - POSTGRES_PASSWORD=password
     ports:
-      - "8080:8080"
+      - "5432:5432" # Exposed so you can check DB from your laptop
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - chronos-network
-    restart: unless-stopped
+
+  # Redis (Self-contained in this compose stack)
+  redis:
+    image: redis:alpine
+    container_name: chronos-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - chronos-network
 
 volumes:
   postgres_data:
+  redis_data:
 
 networks:
   chronos-network:

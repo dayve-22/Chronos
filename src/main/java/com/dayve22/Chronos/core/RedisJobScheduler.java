@@ -23,7 +23,7 @@ public class RedisJobScheduler {
     @Autowired
     private StringRedisTemplate redis;
 
-    // Lua script to atomically find due jobs, remove them from ZSET, and return them
+
     private final String POP_SCRIPT =
             "local jobs = redis.call('ZRANGEBYSCORE', KEYS[1], 0, ARGV[1], 'LIMIT', 0, ARGV[2]) " +
                     "if #jobs > 0 then " +
@@ -44,10 +44,7 @@ public class RedisJobScheduler {
         redis.opsForZSet().add("job:schedule", jobId.toString(), score);
     }
 
-    /**
-     * Atomically pops jobs that are due for execution.
-     * Because this removes them from Redis, no other node will see them.
-     */
+
     public List<String> pollDueJobs(int limit) {
         long now = System.currentTimeMillis();
 
@@ -60,8 +57,7 @@ public class RedisJobScheduler {
         );
     }
 
-    // You can keep this for manual locking if needed,
-    // but the Lua script largely prevents the need for it during polling.
+
     public boolean tryLockJob(Long jobId) {
         RLock lock = redisson.getLock("job:lock:" + jobId);
         try {
@@ -71,7 +67,6 @@ public class RedisJobScheduler {
         }
     }
 
-    // Helper to remove a job if it's cancelled/deleted
     public void removeJob(Long jobId) {
         redis.opsForZSet().remove("job:schedule", jobId.toString());
     }

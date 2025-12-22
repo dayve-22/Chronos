@@ -4,6 +4,7 @@ import com.dayve22.Chronos.entity.*;
 import com.dayve22.Chronos.executor.JobExecutor;
 import com.dayve22.Chronos.repository.JobExecutionRepository;
 import com.dayve22.Chronos.repository.JobRepository;
+import com.dayve22.Chronos.service.NotificationService;
 import jakarta.persistence.OptimisticLockException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,10 +25,12 @@ public class DistributedJobScheduler {
     private static final Logger logger = LoggerFactory.getLogger(DistributedJobScheduler.class);
     private static final int BATCH_SIZE = 100;
     private static final int LOOK_AHEAD_SECONDS = 10;
-
+    @Autowired
+    private RedisJobScheduler redisScheduler;
     @Autowired
     private JobRepository jobRepository;
-
+    @Autowired
+    private NotificationService notificationService;
     @Autowired
     @Lazy
     private DistributedJobScheduler self; // Required for @Transactional to work
@@ -58,29 +61,19 @@ public class DistributedJobScheduler {
     @Scheduled(fixedRate = 1000)
     public void pollAndScheduleJobs() {
         try {
-            LocalDateTime now = LocalDateTime.now();
-            LocalDateTime lookAhead = now.plusSeconds(LOOK_AHEAD_SECONDS);
 
-            logger.info("Polling for jobs... Now: {}, LookAhead: {}", now, lookAhead);
+            List<String> jobIds = redisScheduler.pollDueJobs(BATCH_SIZE);
 
-            // --- FIX 2: Updated to match your reverted Repository signature (3 args) ---
-            List<Job> jobsToRun = jobRepository.findJobsToRun(now, lookAhead, BATCH_SIZE);
+            if (jobIds.isEmpty()) return;
 
-            logger.info("Found {} jobs to schedule", jobsToRun.size());
+            logger.info("Redis popped {} jobs to run", jobIds.size());
 
-            for (Job job : jobsToRun) {
-                // --- FIX 3: Check if job is already "In Flight" ---
-                if (processingJobIds.contains(job.getId())) {
-                    logger.debug("Skipping job {} (already in process)", job.getId());
-                    continue;
-                }
+            // 2. Fetch full details from DB and Run
+            for (String idStr : jobIds) {
+                Long jobId = Long.valueOf(idStr);
 
-                // Mark job as processing
-                processingJobIds.add(job.getId());
-
-                logger.info("Scheduling job: {} - {}, next run: {}",
-                        job.getId(), job.getName(), job.getNextRunTime());
-                scheduleJobExecution(job);
+                // Submit to thread pool
+                executorService.submit(() -> self.executeJob(jobId));
             }
 
         } catch (Exception e) {
@@ -181,27 +174,39 @@ public class DistributedJobScheduler {
             job.setStatus(JobStatus.COMPLETED);
         }
         jobRepository.save(job);
+        if (job.getStatus() == JobStatus.ACTIVE) {
+            redisScheduler.scheduleJob(job.getId(), job.getNextRunTime());
+        }
     }
 
     @Transactional
     protected void handleFailedExecution(Job job, JobExecution execution, Exception e) {
-        // (Keep your existing implementation)
         execution.setEndTime(LocalDateTime.now());
         execution.setStatus(ExecutionStatus.FAILED);
         execution.setErrorMessage(e.getMessage());
         jobExecutionRepository.save(execution);
+
         job = jobRepository.findById(job.getId()).orElse(null);
         if (job == null) return;
+
         job.setRetryCount(job.getRetryCount() + 1);
+
         if (job.getRetryCount() >= job.getMaxRetries()) {
+            logger.error("Job {} failed after {} retries", job.getId(), job.getMaxRetries());
             job.setStatus(JobStatus.FAILED);
+            notificationService.notifyJobFailure(job, e.getMessage());
         } else {
             int delaySeconds = job.getRetryDelaySeconds() * (int) Math.pow(2, job.getRetryCount() - 1);
             job.setNextRunTime(LocalDateTime.now().plusSeconds(delaySeconds));
+
+            logger.info("Scheduling retry {} for job {} in {} seconds",
+                    job.getRetryCount(), job.getId(), delaySeconds);
+
+            redisScheduler.scheduleJob(job.getId(), job.getNextRunTime());
         }
+
         jobRepository.save(job);
     }
-
     private void updateNextRunTime(Job job) {
         if (job.getScheduleType() == ScheduleType.ONE_TIME) return;
         LocalDateTime nextRun = scheduleCalculator.calculateNextRunTime(job);
