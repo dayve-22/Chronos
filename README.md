@@ -12,8 +12,7 @@
 
 ## 🏗️ System Architecture
 
-![Chronos Architecture Diagram](architecture-diagram.png)
-*(Note: Ensure you place the architecture image file in your repo and update this path)*
+![Chronos Architecture Diagram](https://github.com/dayve-22/Chronos/blob/final-submission/chronos_architecture.png)
 
 ### How it Works
 1.  **Submission:** Users submit jobs via REST API (secured by JWT). Jobs are saved to **PostgreSQL** for persistence.
