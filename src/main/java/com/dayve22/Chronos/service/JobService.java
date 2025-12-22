@@ -1,131 +1,132 @@
 package com.dayve22.Chronos.service;
 
-import com.dayve22.Chronos.jobs.CommandExecutionJob;
-import org.quartz.*;
-import org.quartz.impl.matchers.GroupMatcher;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.dayve22.Chronos.core.ScheduleCalculator;
+import com.dayve22.Chronos.entity.*;
+import com.dayve22.Chronos.repository.JobExecutionRepository;
+import com.dayve22.Chronos.repository.JobRepository;
+import com.dayve22.Chronos.repository.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional; // Ensure this is imported
 
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.*;
 
 @Service
 public class JobService {
-    private static final Logger log = LoggerFactory.getLogger(JobService.class);
 
-    private final Scheduler scheduler;
+    @Autowired
+    private UserRepository userRepository;
 
-    public JobService(Scheduler scheduler) {
-        this.scheduler = scheduler;
-    }
+    @Autowired
+    private JobRepository jobRepository;
 
-    // ADD THIS ANNOTATION
+    @Autowired
+    private JobExecutionRepository jobExecutionRepository;
+
+    @Autowired
+    private ScheduleCalculator scheduleCalculator;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     @Transactional
-    public String scheduleOneTimeJob(String command, LocalDateTime executeAt) throws SchedulerException {
-        String jobId = UUID.randomUUID().toString();
+    public Job createJob(String username, JobCreateRequest request) throws Exception {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
-        JobDetail jobDetail = JobBuilder.newJob(CommandExecutionJob.class)
-                .withIdentity(jobId, "user-jobs")
-                .usingJobData(CommandExecutionJob.DATA_COMMAND, command)
-                .usingJobData(CommandExecutionJob.DATA_RETRIES_ALLOWED, 3)
-                .storeDurably(false)
-                .build();
+        Job job = new Job();
+        job.setUser(user);
+        job.setUser(user);
+        job.setName(request.getName());
+        job.setType(request.getType());
+        job.setScheduleType(request.getScheduleType());
+        job.setStatus(JobStatus.ACTIVE);
+        job.setCreatedAt(LocalDateTime.now());
+        job.setUpdatedAt(LocalDateTime.now());
 
-        Trigger trigger = TriggerBuilder.newTrigger()
-                .withIdentity(jobId, "one-time-triggers")
-                .forJob(jobDetail)
-                .startAt(Date.from(executeAt.atZone(ZoneId.systemDefault()).toInstant()))
-                .build();
-
-        // FIX: Use the atomic method. Do not call addJob() separately.
-        scheduler.scheduleJob(jobDetail, trigger);
-
-        log.info("Scheduled one-time job: {} at {}", jobId, executeAt);
-        return jobId;
-    }
-
-    // ADD THIS ANNOTATION
-    @Transactional
-    public String scheduleCronJob(String command, String cronExpression) throws SchedulerException {
-        String jobId = UUID.randomUUID().toString();
-
-        try {
-            CronScheduleBuilder.cronSchedule(cronExpression);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid cron expression: " + cronExpression, e);
-        }
-
-        JobDetail jobDetail = JobBuilder.newJob(CommandExecutionJob.class)
-                .withIdentity(jobId, "user-jobs")
-                .usingJobData(CommandExecutionJob.DATA_COMMAND, command)
-                .usingJobData(CommandExecutionJob.DATA_RETRIES_ALLOWED, 3)
-                .storeDurably(true)
-                .requestRecovery(true)
-                .build();
-
-        CronTrigger trigger = TriggerBuilder.newTrigger()
-                .withIdentity(jobId, "cron-triggers")
-                .forJob(jobDetail)
-                .withSchedule(CronScheduleBuilder.cronSchedule(cronExpression)
-                        .withMisfireHandlingInstructionDoNothing())
-                .startNow()
-                .build();
-
-        // FIX: Use the atomic method. Do not call addJob() separately.
-        scheduler.scheduleJob(jobDetail, trigger);
-
-        log.info("Scheduled cron job: {} with expression: {}", jobId, cronExpression);
-        return jobId;
-    }
-
-    // Management Methods
-    public void deleteJob(String jobId) throws SchedulerException {
-        JobKey jobKey = new JobKey(jobId, "user-jobs");
-        if (scheduler.checkExists(jobKey)) {
-            scheduler.deleteJob(jobKey);
-            log.info("Deleted job: {}", jobId);
+        // Set schedule
+        if (request.getScheduleType() == ScheduleType.ONE_TIME) {
+            job.setNextRunTime(request.getRunAt());
         } else {
-            throw new SchedulerException("Job not found: " + jobId);
-        }
-    }
-
-    public void pauseJob(String jobId) throws SchedulerException {
-        JobKey jobKey = new JobKey(jobId, "user-jobs");
-        if (scheduler.checkExists(jobKey)) {
-            scheduler.pauseJob(jobKey);
-            log.info("Paused job: {}", jobId);
-        } else {
-            throw new SchedulerException("Job not found: " + jobId);
-        }
-    }
-
-    public void resumeJob(String jobId) throws SchedulerException {
-        JobKey jobKey = new JobKey(jobId, "user-jobs");
-        if (scheduler.checkExists(jobKey)) {
-            scheduler.resumeJob(jobKey);
-            log.info("Resumed job: {}", jobId);
-        } else {
-            throw new SchedulerException("Job not found: " + jobId);
-        }
-    }
-
-    // Get job details
-    public JobDetail getJobDetail(String jobId) throws SchedulerException {
-        JobKey jobKey = new JobKey(jobId, "user-jobs");
-        return scheduler.getJobDetail(jobKey);
-    }
-
-    // List all jobs
-    public List<String> listAllJobs() throws SchedulerException {
-        List<String> jobIds = new ArrayList<>();
-        for (String groupName : scheduler.getJobGroupNames()) {
-            for (JobKey jobKey : scheduler.getJobKeys(GroupMatcher.jobGroupEquals(groupName))) {
-                jobIds.add(jobKey.getName());
+            if (request.getCronExpression() != null) {
+                job.setCronExpression(request.getCronExpression());
+            } else if (request.getIntervalSeconds() != null) {
+                job.setIntervalSeconds(request.getIntervalSeconds());
+            } else {
+                throw new IllegalArgumentException("Recurring job must have cron or interval");
             }
+            job.setNextRunTime(
+                    request.getRunAt() != null ? request.getRunAt() : LocalDateTime.now()
+            );
         }
-        return jobIds;
+
+        // Set retry configuration
+        if (request.getMaxRetries() != null) {
+            job.setMaxRetries(request.getMaxRetries());
+        }
+        if (request.getRetryDelaySeconds() != null) {
+            job.setRetryDelaySeconds(request.getRetryDelaySeconds());
+        }
+
+        // Set job data based on type
+        if (request.getType() == JobType.COMMAND) {
+            job.setJobData(objectMapper.writeValueAsString(request.getCommandData()));
+        } else if (request.getType() == JobType.EMAIL) {
+            job.setJobData(objectMapper.writeValueAsString(request.getEmailData()));
+        }
+
+        return jobRepository.save(job);
+    }
+
+    public Job getJob(Long jobId, Long userId) {
+        Job job = jobRepository.findById(jobId)
+                .orElseThrow(() -> new RuntimeException("Job not found"));
+
+        if (!job.getUser().getId().equals(userId)) {
+            throw new RuntimeException("Unauthorized access to job");
+        }
+
+        return job;
+    }
+
+    public List<Job> getUserJobs(Long userId) {
+        return jobRepository.findByUserId(userId);
+    }
+
+    @Transactional
+    public Job updateJob(Long jobId, Long userId, JobUpdateRequest request) throws Exception {
+        Job job = getJob(jobId, userId);
+
+        if (request.getName() != null) {
+            job.setName(request.getName());
+        }
+
+        if (request.getStatus() != null) {
+            job.setStatus(request.getStatus());
+        }
+
+        if (request.getCronExpression() != null) {
+            job.setCronExpression(request.getCronExpression());
+        }
+
+        if (request.getIntervalSeconds() != null) {
+            job.setIntervalSeconds(request.getIntervalSeconds());
+        }
+
+        job.setUpdatedAt(LocalDateTime.now());
+
+        return jobRepository.save(job);
+    }
+
+    @Transactional
+    public void deleteJob(Long jobId, Long userId) {
+        Job job = getJob(jobId, userId);
+        jobRepository.delete(job);
+    }
+
+    public List<JobExecution> getJobExecutions(Long jobId, Long userId) {
+        getJob(jobId, userId); // Check authorization
+        return jobExecutionRepository.findTop10ByJobId(jobId);
     }
 }

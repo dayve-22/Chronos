@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: chronos-postgres
+    environment:
+      POSTGRES_DB: chronos
+      POSTGRES_USER: chronos_user
+      POSTGRES_PASSWORD: chronos_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chronos_user -d chronos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - chronos-network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chronos-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/chronos
+      SPRING_DATASOURCE_USERNAME: chronos_user
+      SPRING_DATASOURCE_PASSWORD: chronos_password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_SHOW_SQL: "false"
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.PostgreSQLDialect
+      # JWT Configuration (set your own secret)
+      JWT_SECRET: your-secret-key-change-this-in-production
+      JWT_EXPIRATION: 86400000
+    ports:
+      - "8080:8080"
+    networks:
+      - chronos-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  chronos-network:
+    driver: bridge

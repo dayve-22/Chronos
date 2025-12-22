@@ -1,71 +1,66 @@
 package com.dayve22.Chronos.controller;
 
-import com.dayve22.Chronos.dto.ApiResponse;
-import com.dayve22.Chronos.dto.JobRequest;
+import com.dayve22.Chronos.entity.*;
 import com.dayve22.Chronos.service.JobService;
-import lombok.RequiredArgsConstructor;
-import org.quartz.SchedulerException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/jobs")
-@RequiredArgsConstructor
 public class JobController {
 
-    private final JobService jobService;
+    @Autowired
+    private JobService jobService;
 
     @PostMapping
-    public ResponseEntity<ApiResponse> scheduleJob(@RequestBody JobRequest request) {
-        try {
-            String jobId;
-            if ("RECURRING".equalsIgnoreCase(request.getType())) {
-                if (request.getCronExpression() == null) {
-                    throw new IllegalArgumentException("Cron expression required for recurring jobs");
-                }
-                jobId = jobService.scheduleCronJob(request.getCommand(), request.getCronExpression());
-            } else {
-                if (request.getExecuteAt() == null) {
-                    throw new IllegalArgumentException("Execution time required for one-time jobs");
-                }
-                jobId = jobService.scheduleOneTimeJob(request.getCommand(), request.getExecuteAt());
-            }
-            return ResponseEntity.ok(new ApiResponse(true, "Job Scheduled Successfully", jobId));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(new ApiResponse(false, e.getMessage(), null));
-        }
+    public ResponseEntity<Job> createJob(
+            @AuthenticationPrincipal UserDetails userDetails,  // ✅ Changed from User to UserDetails
+            @RequestBody JobCreateRequest request) throws Exception {
+        Job job = jobService.createJob(userDetails.getUsername(), request);  // ✅ Pass username
+        return ResponseEntity.ok(job);
     }
 
-    // 2. Pause a Job
-    @PutMapping("/{jobId}/pause")
-    public ResponseEntity<ApiResponse> pauseJob(@PathVariable String jobId) {
-        try {
-            jobService.pauseJob(jobId);
-            return ResponseEntity.ok(new ApiResponse(true, "Job Paused", null));
-        } catch (SchedulerException e) {
-            return ResponseEntity.internalServerError().body(new ApiResponse(false, e.getMessage(), null));
-        }
+    @GetMapping
+    public ResponseEntity<List<Job>> getUserJobs(@AuthenticationPrincipal User user) {
+        List<Job> jobs = jobService.getUserJobs(user.getId());
+        return ResponseEntity.ok(jobs);
     }
 
-    // 3. Resume a Job
-    @PutMapping("/{jobId}/resume")
-    public ResponseEntity<ApiResponse> resumeJob(@PathVariable String jobId) {
-        try {
-            jobService.resumeJob(jobId);
-            return ResponseEntity.ok(new ApiResponse(true, "Job Resumed", null));
-        } catch (SchedulerException e) {
-            return ResponseEntity.internalServerError().body(new ApiResponse(false, e.getMessage(), null));
-        }
+    @GetMapping("/{id}")
+    public ResponseEntity<Job> getJob(
+            @AuthenticationPrincipal User user,
+            @PathVariable Long id) {
+        Job job = jobService.getJob(id, user.getId());
+        return ResponseEntity.ok(job);
     }
 
-    // 4. Delete/Stop a Job
-    @DeleteMapping("/{jobId}")
-    public ResponseEntity<ApiResponse> deleteJob(@PathVariable String jobId) {
-        try {
-            jobService.deleteJob(jobId);
-            return ResponseEntity.ok(new ApiResponse(true, "Job Deleted", null));
-        } catch (SchedulerException e) {
-            return ResponseEntity.internalServerError().body(new ApiResponse(false, e.getMessage(), null));
-        }
+    @PutMapping("/{id}")
+    public ResponseEntity<Job> updateJob(
+            @AuthenticationPrincipal User user,
+            @PathVariable Long id,
+            @RequestBody JobUpdateRequest request) throws Exception {
+        Job job = jobService.updateJob(id, user.getId(), request);
+        return ResponseEntity.ok(job);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteJob(
+            @AuthenticationPrincipal User user,
+            @PathVariable Long id) {
+        jobService.deleteJob(id, user.getId());
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/executions")
+    public ResponseEntity<List<JobExecution>> getJobExecutions(
+            @AuthenticationPrincipal User user,
+            @PathVariable Long id) {
+        List<JobExecution> executions = jobService.getJobExecutions(id, user.getId());
+        return ResponseEntity.ok(executions);
     }
 }

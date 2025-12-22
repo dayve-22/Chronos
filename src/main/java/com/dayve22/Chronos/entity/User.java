@@ -1,13 +1,15 @@
 package com.dayve22.Chronos.entity;
 
+
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.Set;
 
 @Entity
 @Table(name = "users")
-@Data
-@NoArgsConstructor
 public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -16,14 +18,31 @@ public class User {
     @Column(unique = true, nullable = false)
     private String username;
 
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL)
+    @JsonIgnore
+    private Set<Job> jobs;
+
     @Column(nullable = false)
-    private String password;
+    @JsonIgnore
+    private String passwordHash;
 
-    private String roles; // e.g., "ROLE_ADMIN,ROLE_USER"
+    @Column(nullable = false)
+    private String email;
 
-    public User(String username, String password, String roles) {
-        this.username = username;
-        this.password = password;
-        this.roles = roles;
-    }
+
+    private LocalDateTime createdAt;
+
+    // Getters and setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
+    public String getPasswordHash() { return passwordHash; }
+    public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public Set<Job> getJobs() { return jobs; }
+    public void setJobs(Set<Job> jobs) { this.jobs = jobs; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
