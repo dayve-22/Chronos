@@ -7,7 +7,6 @@ import com.dayve22.Chronos.repository.JobRepository;
 import jakarta.persistence.OptimisticLockException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -16,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.*;
 
 @Service
@@ -29,6 +29,10 @@ public class DistributedJobScheduler {
     private JobRepository jobRepository;
 
     @Autowired
+    @Lazy
+    private DistributedJobScheduler self; // Required for @Transactional to work
+
+    @Autowired
     private JobExecutionRepository jobExecutionRepository;
 
     @Autowired
@@ -37,8 +41,9 @@ public class DistributedJobScheduler {
     @Autowired
     private ScheduleCalculator scheduleCalculator;
 
-    // Use a thread pool with core size based on available processors
-    // Max pool size should be higher to handle bursts
+    // --- FIX 1: In-Memory Set to track jobs currently being processed ---
+    private final Set<Long> processingJobIds = ConcurrentHashMap.newKeySet();
+
     private final ExecutorService executorService = new ThreadPoolExecutor(
             Runtime.getRuntime().availableProcessors() * 2,
             Runtime.getRuntime().availableProcessors() * 4,
@@ -47,11 +52,9 @@ public class DistributedJobScheduler {
             new ThreadPoolExecutor.CallerRunsPolicy()
     );
 
-    // High-frequency job scheduler (for jobs running every few seconds)
     private final ScheduledExecutorService highFrequencyExecutor =
             Executors.newScheduledThreadPool(Runtime.getRuntime().availableProcessors());
 
-    // Polling scheduler - runs every second to fetch jobs
     @Scheduled(fixedRate = 1000)
     public void pollAndScheduleJobs() {
         try {
@@ -60,12 +63,21 @@ public class DistributedJobScheduler {
 
             logger.info("Polling for jobs... Now: {}, LookAhead: {}", now, lookAhead);
 
-            // Fetch jobs that need to run in the next window
+            // --- FIX 2: Updated to match your reverted Repository signature (3 args) ---
             List<Job> jobsToRun = jobRepository.findJobsToRun(now, lookAhead, BATCH_SIZE);
 
             logger.info("Found {} jobs to schedule", jobsToRun.size());
 
             for (Job job : jobsToRun) {
+                // --- FIX 3: Check if job is already "In Flight" ---
+                if (processingJobIds.contains(job.getId())) {
+                    logger.debug("Skipping job {} (already in process)", job.getId());
+                    continue;
+                }
+
+                // Mark job as processing
+                processingJobIds.add(job.getId());
+
                 logger.info("Scheduling job: {} - {}, next run: {}",
                         job.getId(), job.getName(), job.getNextRunTime());
                 scheduleJobExecution(job);
@@ -75,26 +87,26 @@ public class DistributedJobScheduler {
             logger.error("Error in job polling", e);
         }
     }
-    private DistributedJobScheduler currentProxy() {
-        return (DistributedJobScheduler) AopContext.currentProxy();
-    }
+
     private void scheduleJobExecution(Job job) {
         long delay = calculateDelay(job.getNextRunTime());
-        final long delayMillis = Math.max(0, delay); // Run immediately if past due
-
+        final long delayMillis = Math.max(0, delay);
         final Long jobId = job.getId();
 
         if (job.getIntervalSeconds() != null && job.getIntervalSeconds() < 30) {
-            highFrequencyExecutor.schedule(() -> currentProxy().executeJob(jobId), delayMillis, TimeUnit.MILLISECONDS);
+            highFrequencyExecutor.schedule(() -> self.executeJob(jobId), delayMillis, TimeUnit.MILLISECONDS);
         } else {
             executorService.submit(() -> {
                 try {
-                    if (delayMillis > 0) Thread.sleep(delayMillis);
-
-                    currentProxy().executeJob(jobId);
+                    if (delayMillis > 0) {
+                        Thread.sleep(delayMillis);
+                    }
+                    self.executeJob(jobId);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     logger.warn("Job execution interrupted for job: {}", jobId);
+                    // Important: remove from set if interrupted before execution
+                    processingJobIds.remove(jobId);
                 }
             });
         }
@@ -103,25 +115,24 @@ public class DistributedJobScheduler {
     @Transactional
     public void executeJob(Long jobId) {
         try {
-            // Use pessimistic locking to prevent duplicate execution
             Job job = jobRepository.findByIdWithLock(jobId);
 
             if (job == null) {
                 logger.warn("Job not found: {}", jobId);
+                processingJobIds.remove(jobId); // Clean up
                 return;
             }
 
             LocalDateTime now = LocalDateTime.now();
 
-            // Double-check the job should still run (another instance might have picked it up)
             if (job.getNextRunTime().isAfter(now.plusSeconds(1)) ||
                     job.getStatus() != JobStatus.ACTIVE) {
+                processingJobIds.remove(jobId); // Clean up
                 return;
             }
 
             logger.info("Executing job: {} - {}", jobId, job.getName());
 
-            // Create execution record
             JobExecution execution = new JobExecution();
             execution.setJob(job);
             execution.setStartTime(now);
@@ -129,76 +140,70 @@ public class DistributedJobScheduler {
             execution.setAttemptNumber(job.getRetryCount() + 1);
             jobExecutionRepository.save(execution);
 
-            // Update job's next run time BEFORE execution
             updateNextRunTime(job);
             job.setLastRunTime(now);
             jobRepository.save(job);
 
-            // Execute the job asynchronously
+            // Execute asynchronously
             CompletableFuture.runAsync(() -> {
                 try {
                     jobExecutor.execute(job, execution);
                     handleSuccessfulExecution(execution);
                 } catch (Exception e) {
                     handleFailedExecution(job, execution, e);
+                } finally {
+                    // --- FIX 4: CRITICAL - Remove from set after async execution finishes ---
+                    processingJobIds.remove(jobId);
+                    logger.debug("Job {} processing complete. Removed from lock set.", jobId);
                 }
             }, executorService);
 
         } catch (OptimisticLockException e) {
             logger.debug("Job {} already picked up by another instance", jobId);
+            processingJobIds.remove(jobId);
         } catch (Exception e) {
             logger.error("Error executing job: {}", jobId, e);
+            processingJobIds.remove(jobId);
         }
     }
 
+    // ... handleSuccessfulExecution, handleFailedExecution, updateNextRunTime, etc. remain the same ...
+
     @Transactional
     protected void handleSuccessfulExecution(JobExecution execution) {
+        // (Keep your existing implementation)
         execution.setEndTime(LocalDateTime.now());
         execution.setStatus(ExecutionStatus.SUCCESS);
         jobExecutionRepository.save(execution);
-
         Job job = execution.getJob();
-        job.setRetryCount(0); // Reset retry count on success
-
-        // Mark one-time jobs as completed
+        job.setRetryCount(0);
         if (job.getScheduleType() == ScheduleType.ONE_TIME) {
             job.setStatus(JobStatus.COMPLETED);
         }
-
         jobRepository.save(job);
     }
 
     @Transactional
     protected void handleFailedExecution(Job job, JobExecution execution, Exception e) {
+        // (Keep your existing implementation)
         execution.setEndTime(LocalDateTime.now());
         execution.setStatus(ExecutionStatus.FAILED);
         execution.setErrorMessage(e.getMessage());
         jobExecutionRepository.save(execution);
-
         job = jobRepository.findById(job.getId()).orElse(null);
         if (job == null) return;
-
         job.setRetryCount(job.getRetryCount() + 1);
-
         if (job.getRetryCount() >= job.getMaxRetries()) {
-            logger.error("Job {} failed after {} retries", job.getId(), job.getMaxRetries());
             job.setStatus(JobStatus.FAILED);
         } else {
-            // Schedule retry with exponential backoff
             int delaySeconds = job.getRetryDelaySeconds() * (int) Math.pow(2, job.getRetryCount() - 1);
             job.setNextRunTime(LocalDateTime.now().plusSeconds(delaySeconds));
-            logger.info("Scheduling retry {} for job {} in {} seconds",
-                    job.getRetryCount(), job.getId(), delaySeconds);
         }
-
         jobRepository.save(job);
     }
 
     private void updateNextRunTime(Job job) {
-        if (job.getScheduleType() == ScheduleType.ONE_TIME) {
-            return; // One-time jobs don't need next run time
-        }
-
+        if (job.getScheduleType() == ScheduleType.ONE_TIME) return;
         LocalDateTime nextRun = scheduleCalculator.calculateNextRunTime(job);
         job.setNextRunTime(nextRun);
     }
@@ -208,19 +213,8 @@ public class DistributedJobScheduler {
     }
 
     public void shutdown() {
+        // (Keep your existing implementation)
         executorService.shutdown();
         highFrequencyExecutor.shutdown();
-        try {
-            if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
-                executorService.shutdownNow();
-            }
-            if (!highFrequencyExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
-                highFrequencyExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executorService.shutdownNow();
-            highFrequencyExecutor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
     }
 }

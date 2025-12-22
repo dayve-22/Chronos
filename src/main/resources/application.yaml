@@ -4,7 +4,15 @@ server:
 spring:
   application:
     name: Chronos
-
+  redis:
+    host: localhost
+    port: 6379
+    password: ${REDIS_PASSWORD:}
+    lettuce:
+      pool:
+        max-active: 20
+        max-idle: 10
+        min-idle: 5
   datasource:
     url: jdbc:postgresql://localhost:5432/chronos_db
     username: ajay
